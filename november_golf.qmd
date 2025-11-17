@@ -52,6 +52,9 @@ I made a 6 inch grid after the meeting and think I might have fixed it?
 
 ```{r}
 total <- read.csv("C:/Users/Jenna/OneDrive/Documents/TPCSawgrass/green_grid_6inch.csv")
+shapefile <- st_read("C:/Users/Jenna/OneDrive/Documents/TPCSawgrass/ShpGolfMap") %>%
+  st_make_valid() %>%
+  st_transform(4326)
 
 gpgp_matrix <- total %>%
   # 1. Keep:
@@ -116,7 +119,7 @@ avg_sr <- data.frame(
 avg_sr <- st_as_sf(avg_sr, coords = c('long', 'lat'), crs = 4326)
 
 # Plot the predicted mean
-p_mean <- ggplot() +
+ggplot() +
   geom_sf(data = shapefile) +
   geom_sf(data = avg_sr, aes(color = mean_pred), size = 3) +
   scale_color_viridis_c(name = "Predicted Strokes") +
@@ -127,8 +130,6 @@ p_mean <- ggplot() +
   ) +
   theme_minimal() +
   ylim(30.20345,30.2038) + xlim(81.3951,81.3947)
-
-print(p_mean)
 
 
 # # Define a color palette for the strokes prediction
