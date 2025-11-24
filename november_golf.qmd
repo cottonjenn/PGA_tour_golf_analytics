@@ -63,9 +63,9 @@ gpgp_matrix <- total %>%
   filter(
     (NewBoundary == 'Green' & !Round %in% c(2, 3, 4)) |
     is.na(StrokesRemaining)
-  ) %>%
+  )
   # 2. Keep only the columns you want (NAs stay)
-  select(Round, StrokesRemaining, PlayerLastName, NewBoundary, long, lat)
+  # select(Round, StrokesRemaining, PlayerLastName, NewBoundary, long, lat)
 
 not_missing <- !is.na(gpgp_matrix$StrokesRemaining)
 y <- gpgp_matrix$StrokesRemaining[not_missing]
@@ -77,34 +77,43 @@ X <- matrix(1, nrow = length(y), ncol = 1)  # X = [1, 1, ..., 1]
 fit <- fit_model(
   y = y,
   locs = locs,
-  X = matrix(1, nrow = length(y), ncol = 1),
+  X = X,
   covfun_name = "matern_anisotropic2D",
-  
-  m_seq = 20,          # ← THIS LINE FIXES IT FOREVER
-                       # 20 is perfect for a green (you never need more than ~20 neighbors)
+  m_seq = 10,          # should we decrease this?
   reorder = TRUE,
-  max_iter = 100,
-  convtol = 1e-4,
-  silent = FALSE
+  max_iter = 40
+  # convtol = 1e-4,
+  # silent = FALSE
 )
 
 summary(fit)   # ← now works perfectly, no crash
 
 # we want to predict strokes remaining from a particular point on the green
 
-pred_inds <- is.na(gpgp_matrix$StrokesRemaining)
-locs_pred <- as.matrix(gpgp_matrix[pred_inds, c('long','lat')])
+#pred_inds <- is.na(gpgp_matrix$StrokesRemaining)
+#locs_pred <- as.matrix(gpgp_matrix[pred_inds, c('long','lat')])
 
-# Define X_pred with 1 column (the intercept)
-# X_pred <- as.matrix(rep(1, nrow(locs_pred)))
-X_pred <- matrix(1, nrow = nrow(locs_pred), ncol = 1)
+#X_pred <- matrix(1, nrow = nrow(locs_pred), ncol = 1)
 
 # The prediction call
-preds <- predictions(
-  fit = fit, 
-  locs_pred = locs_pred, 
-  X_pred = X_pred, # X_pred now has 1 column, matching length(fit$beta) = 1
-)
+#preds <- predictions(
+ # fit = fit, 
+  #locs_pred = locs_pred, 
+  #X_pred = X_pred, # X_pred now has 1 column, matching length(fit$beta) = 1
+#)
+
+# ONLY PREDICT ON THE ACTUAL GREEN
+pred_sf <- st_as_sf(data.frame(long = gpgp_matrix$long[pred_inds], 
+                               lat = gpgp_matrix$lat[pred_inds]),
+                    coords = c("long", "lat"), crs = 4326)
+
+valid_pred <- st_intersection(pred_sf, shapefile)
+
+locs_pred <- st_coordinates(valid_pred)
+colnames(locs_pred) <- c("long", "lat")
+X_pred <- matrix(1, nrow(locs_pred), ncol = 1)
+
+preds <- predictions(fit = fit, locs_pred = locs_pred, X_pred = X_pred)
 
 avg_sr <- data.frame(
   long = locs_pred[, 1],
@@ -132,72 +141,175 @@ ggplot() +
   ylim(30.20345,30.2038) + xlim(81.3951,81.3947)
 
 
-# # Define a color palette for the strokes prediction
-# pal <- colorNumeric(
-#   palette = "viridis", 
-#   domain = avg_sr$mean_pred
-# )
-# 
-# # # Create popup for each point
-# # point_popup <- paste0(
-# #     "<b>Prediction:</b> ", round(avg_sr_sf$mean_pred, 3), "<br>",
-# #     "<b>Long:</b> ", round(st_coordinates(avg_sr_sf)[, "X"], 8), "<br>",
-# #     "<b>Lat:</b> ", round(st_coordinates(avg_sr_sf)[, "Y"], 8)
-# #   )
-# 
-# # --- 2. Build the Leaflet Map (FIXED WITH NAMESPACING) ---
-# 
-# leaflet_map <- leaflet(options = leafletOptions(minZoom = 16, maxZoom = 25)) %>%
-#   
-#   # 1. Add a base map (e.g., OpenStreetMap)
-#   addProviderTiles(providers$CartoDB.Positron) %>%
-#   
-#   # 2. Add the Shapefile (Polygons)
-#   addPolygons(
-#     data = shapefile, 
-#     fillColor = "lightgray",
-#     weight = 2,
-#     opacity = 1,
-#     color = "darkgray",
-#     fillOpacity = 0.5,
-#     # popup = ~point_popup,
-#     group = "Shapefile Boundary"
-#   ) %>%
-#   
-#   # 3. Add the Data Points (Circle Markers)
-#   addCircleMarkers(
-#     data = avg_sr, 
-#     radius = 5,
-#     fillColor = pal(avg_sr$mean_pred),
-#     fillOpacity = 0.9,
-#     color = "#000000", # Black border
-#     weight = 1,
-#     stroke = TRUE,
-#     # popup = point_popup, 
-#     group = "Predicted Strokes"
-#   ) %>%
-#   
-#   addCircleMarkers(lng = -81.39498, lat = 30.20359, color = 'red', opacity = 0.7, fillOpacity = 0.7) |> 
-#   
-#   # 4. Add the Legend (CRITICAL FIX: Using leaflet::addLegend)
-#   # This guarantees R calls the function from the leaflet package, avoiding
-#   # conflicts with functions of the same name from other loaded packages.
-#   leaflet::addLegend(
-#     pal = pal, 
-#     values = avg_sr$mean_pred, 
-#     title = "Predicted Strokes",
-#     position = "bottomright"
-#   ) %>%
-#   
-#   # 5. Automatically set the view to fit all data
-#   setView(
-#     lng = mean(st_coordinates(avg_sr)[, "X"]),
-#     lat = mean(st_coordinates(avg_sr)[, "Y"]),
-#     zoom = 18 
-#   )
+ # Define a color palette for the strokes prediction
+ pal <- colorNumeric(
+   palette = "viridis",
+   domain = avg_sr$mean_pred
+ )
 
-# Print the final Leaflet map
-# print(leaflet_map)
+ # Create popup for each point
+ point_popup <- paste0(
+     "<b>Prediction:</b> ", round(avg_sr$mean_pred, 3), "<br>",
+     "<b>Long:</b> ", round(st_coordinates(avg_sr)[, "X"], 8), "<br>",
+     "<b>Lat:</b> ", round(st_coordinates(avg_sr)[, "Y"], 8)
+   )
+
+ # --- 2. Build the Leaflet Map (FIXED WITH NAMESPACING) ---
+
+leaflet(options = leafletOptions(minZoom = 16, maxZoom = 25)) %>%
+
+   # 1. Add a base map (e.g., OpenStreetMap)
+   addProviderTiles(providers$CartoDB.Positron) %>%
+
+   # 2. Add the Shapefile (Polygons)
+   addPolygons(
+     data = shapefile,
+     fillColor = "lightgray",
+     weight = 2,
+     opacity = 1,
+     color = "darkgray",
+     fillOpacity = 0.5,
+     # popup = ~point_popup,
+     group = "Shapefile Boundary"
+   ) %>%
+
+   # 3. Add the Data Points (Circle Markers)
+   addCircleMarkers(
+     data = avg_sr,
+   radius = 5,
+     fillColor = pal(avg_sr$mean_pred),
+     fillOpacity = 0.9,
+     color = "#000000", # Black border
+     weight = 1,
+     stroke = TRUE,
+     # popup = point_popup,
+     group = "Predicted Strokes"
+   ) %>%
+
+   addCircleMarkers(lng = -81.39489, lat = 30.20358, color = 'red', opacity = 0.7, fillOpacity = 0.7) |>
+  
+# 3	30.20358	-81.39489
+
+   # 4. Add the Legend (CRITICAL FIX: Using leaflet::addLegend)
+   # This guarantees R calls the function from the leaflet package, avoiding
+   # conflicts with functions of the same name from other loaded packages.
+   leaflet::addLegend(
+     pal = pal,
+     values = avg_sr$mean_pred,
+     title = "Predicted Strokes",
+     position = "bottomright"
+   ) %>%
+
+   # 5. Automatically set the view to fit all data
+   setView(
+     lng = mean(st_coordinates(avg_sr)[, "X"]),
+     lat = mean(st_coordinates(avg_sr)[, "Y"]),
+     zoom = 18
+   )
+
+ # Print the final Leaflet map
+ # print(leaflet_map)
+```
+
+```{r}
+library(geosphere)   # for accurate distances
+library(splines)     # for flexible smooth trend
+
+# Round 3 hole location (your red circle)
+hole_lng <- -81.39498
+hole_lat <-  30.20359
+# 30.20359	-81.39498
+hole <- c(hole_lng, hole_lat)
+
+# Distance in feet from every observed and prediction point to the hole
+dist_obs  <- distHaversine(cbind(gpgp_matrix$long[not_missing], 
+                                 gpgp_matrix$lat[not_missing]), 
+                           hole) * 3.28084   # meters → feet
+
+dist_pred <- distHaversine(locs_pred, hole) * 3.28084
+
+# Build a rich, flexible mean function using natural splines on distance
+# 5–7 df is plenty for a green
+knots <- quantile(dist_obs, probs = seq(0.1, 0.9, length.out = 5))
+
+X      <- ns(dist_obs,  knots = knots)          # training design matrix
+X_pred <- predict(ns(dist_obs, knots = knots), dist_pred)  # same basis for prediction
+
+# Optional: also keep the intercept if you want (almost always yes)
+X      <- cbind(1, X)
+X_pred <- cbind(1, X_pred)
+
+# Refit the model with the strong trend
+fit_trend <- fit_model(
+  y = y,
+  locs = locs,
+  X = X,
+  covfun_name = "matern_anisotropic2D",
+  m_seq = 8,           # can be lower now because the trend eats most of the signal
+  reorder = TRUE,
+  max_iter = 50
+)
+
+summary(fit_trend)
+
+# Predict
+preds_trend <- predictions(
+  fit = fit_trend,
+  locs_pred = locs_pred,
+  X_pred = X_pred
+)
+
+# Put results back together
+avg_sr <- data.frame(
+  long = locs_pred[,1],
+  lat  = locs_pred[,2],
+  mean_pred = preds_trend
+) %>% st_as_sf(coords = c("long", "lat"), crs = 4326)
+
+# Optional but recommended: restrict to inside the actual green polygon again
+avg_sr <- avg_sr %>% st_intersection(shapefile)
+
+# ggplot() +
+#   geom_sf(data = shapefile) +
+#   geom_sf(data = avg_sr, aes(color = mean_pred), size = 3) +
+#   scale_color_viridis_c(name = "Predicted Strokes") +
+#   labs(
+#     title = "Predicted Mean of Strokes Remaining for Round 1",
+#     x = "Longitude",
+#     y = "Latitude"
+#   ) +
+#   theme_minimal() +
+#   ylim(30.20345,30.2038) + xlim(81.3951,81.3947) + geom_point(-81.39489,30.20358)
+# First create a simple data frame with the hole location
+hole <- data.frame(
+  long = -81.39498,
+  lat  =  30.20359,
+  # 30.20359	-81.39498
+  label = "Round 3 Pin"
+) %>% 
+  st_as_sf(coords = c("long", "lat"), crs = 4326)
+
+# Now your full plot with the red pin on top
+ggplot() +
+  geom_sf(data = shapefile, fill = "lightgray", color = "darkgray") +
+  geom_sf(data = avg_sr, aes(color = mean_pred), size = 2.5) +   # your predictions
+  geom_sf(data = hole, color = "red", size = 5, shape = 21, 
+          fill = "red", stroke = 2) +                          # the red pin
+  
+  scale_color_viridis_c(name = "Predicted\nStrokes Remaining", option = "plasma") +
+  
+  labs(
+    title = "Predicted Strokes Remaining — TPC Sawgrass Hole 17 (Round 3 Pin)",
+    subtitle = "Red circle = actual Round 3 pin location",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "right") +
+  ylim(30.20345,30.2038) + xlim(81.3951,81.3947)
+  # coord_sf(xlim = c(-81.395, -81.3947), 
+  #          ylim = c(30.20345, 30.2038))
 ```
 
 ## Same Round 1 but 2 inch grid
